@@ -56,6 +56,71 @@ let KDPathfindingCacheFails = 0;
 
 let KDPFTrim = 40;
 
+/** When true, restores the legacy (iteration-order dependent)
+ * diagonal-smoothing direction; default uses the true predecessor instead. */
+let KDPathLegacyDir = false;
+
+/** Reusable binary min-heap backing the A* open set.
+ * Stores (f, key) pairs where key indexes into the `open` Map.
+ * Duplicate keys are allowed (lazy deletion); stale entries are skipped on pop.
+ * Call kdHeapClear() before each pathfinding run.
+ * NOT re-entrant: KinkyDungeonFindPath must not be called recursively.
+ * (Verified: no callback reachable from the search loop re-enters pathfinding.) */
+let KDHeapF: number[] = [];
+let KDHeapKey: string[] = [];
+let KDHeapSize = 0;
+
+function kdHeapClear(): void {
+	KDHeapSize = 0;
+}
+
+/** Fully release the heap's backing arrays. Called when the map changes so that
+ * no data (including retained key strings) carries over between maps.
+ * Not required for correctness: kdHeapClear() runs at every search start. */
+function KDResetPathfindingHeap(): void {
+	KDHeapF.length = 0;
+	KDHeapKey.length = 0;
+	KDHeapSize = 0;
+}
+
+function kdHeapPush(f: number, key: string): void {
+	let i = KDHeapSize++;
+	KDHeapF[i] = f;
+	KDHeapKey[i] = key;
+	while (i > 0) {
+		let p = (i - 1) >> 1;
+		if (KDHeapF[p] <= KDHeapF[i]) break;
+		let tf = KDHeapF[p]; KDHeapF[p] = KDHeapF[i]; KDHeapF[i] = tf;
+		let tk = KDHeapKey[p]; KDHeapKey[p] = KDHeapKey[i]; KDHeapKey[i] = tk;
+		i = p;
+	}
+}
+
+function kdHeapPop(): string {
+	let topKey = KDHeapKey[0];
+	KDHeapSize--;
+	if (KDHeapSize > 0) {
+		KDHeapF[0] = KDHeapF[KDHeapSize];
+		KDHeapKey[0] = KDHeapKey[KDHeapSize];
+		let i = 0;
+		while (true) {
+			let l = 2 * i + 1, r = l + 1, m = i;
+			if (l < KDHeapSize && KDHeapF[l] < KDHeapF[m]) m = l;
+			if (r < KDHeapSize && KDHeapF[r] < KDHeapF[m]) m = r;
+			if (m === i) break;
+			let tf = KDHeapF[m]; KDHeapF[m] = KDHeapF[i]; KDHeapF[i] = tf;
+			let tk = KDHeapKey[m]; KDHeapKey[m] = KDHeapKey[i]; KDHeapKey[i] = tk;
+			i = m;
+		}
+	}
+	return topKey;
+}
+
+/** Default A* heuristic hoisted to module scope. */
+function KDDefaultHeuristic(xx: number, yy: number, endxx: number, endyy: number): number {
+	return 0.1*KDistEuclideanApprox((xx - endxx) * (xx - endxx), (yy - endyy) * (yy - endyy));
+}
+
 function KDWiredDoorPathable(triggerX: number, triggerY: number, tile?: string, doorX?: number, doorY?: number, ): boolean {
 	if (triggerX == doorX && triggerY == doorY) {
 		// a trigger on top of the door would be unreachable
@@ -152,10 +217,7 @@ function KinkyDungeonFindPath (
 		return [{x: endx, y: endy}];
 	}
 
-	function heuristic(xx: number, yy: number, endxx: number, endyy: number) {
-		return 0.1*KDistEuclideanApprox((xx - endxx) * (xx - endxx), (yy - endyy) * (yy - endyy));
-	}
-	let heur = heuristicOverride || heuristic;
+	let heur = heuristicOverride || KDDefaultHeuristic;
 	// g = cost
 	// f = cost with heuristic
 	// s = source
@@ -165,13 +227,15 @@ function KinkyDungeonFindPath (
 
 	// We generate a grid based on map size
 	let open: Map<string, KDPointCostSource> = new Map();
-	open.set(startx + "," + starty, start);
 	let closed: Map<string, KDPointCostSource> = new Map();
+	kdHeapClear();
+	let startKey = startx + "," + starty;
+	open.set(startKey, start);
+	kdHeapPush(start.f, startKey);
 
 	let costBonus = 0;
 	let MapTile = null;
 	let moveCost = 1;
-	let succ = new Map();
 	let xx = 0;
 	let yy = 0;
 	let loc = "";
@@ -188,23 +252,16 @@ function KinkyDungeonFindPath (
 			console.log("Quit pathfinding");
 			return undefined; // Give up
 		}
-		let lowest_old: KDPointCostSource = undefined;
-		let lowest: KDPointCostSource = undefined;
-		let lc = 1000000000;
 		let dx = 0;
 		let dy = 0;
-		// Get the open tile with the lowest weight
-		open.forEach(o => {
-			if (o.f < lc) {
-				lc = o.f;
-				lowest_old = lowest;
-				lowest = o;
-			}
-		});
-		if (lowest) {
-			let lowLoc = lowest.x + "," + lowest.y;
-			moveCost = 1;
-			succ = new Map();
+		// Get the open tile with the lowest weight (binary heap + lazy deletion)
+		let lowLoc = kdHeapPop();
+		let lowest: KDPointCostSource = open.get(lowLoc);
+		// Skip stale heap entries (node was improved & re-pushed, or already closed)
+		if (!lowest || closed.has(lowLoc)) continue;
+		// Use the true predecessor for the diagonal-smoothing direction.
+		let lowest_old: KDPointCostSource = KDPathLegacyDir ? undefined : closed.get(lowest.s);
+		moveCost = 1;
 			// Check bordering tiles on the lowest
 			for (let x = -1; x <= 1; x++) {
 				for (let y = -1; y <= 1; y++) {
@@ -319,33 +376,27 @@ function KinkyDungeonFindPath (
 									costBonus += 0.4;
 								}
 							}
-							succ.set(xx + "," + yy, {x: xx, y: yy,
+							let q = xx + "," + yy;
+							let succ: KDPointCostSource = {x: xx, y: yy,
 								g: moveCost + costBonus + lowest.g,
 								f: moveCost + costBonus + lowest.g + heur(xx, yy, endx, endy),
-								s: lowLoc});
+								s: lowLoc};
+							let openSucc = open.get(q);
+							if (!openSucc || openSucc.f > succ.f) {
+								let closedSucc = closed.get(q);
+								if (!closedSucc || closedSucc.f > succ.f) {
+									open.set(q, succ);
+									// Lazy deletion: duplicate heap entries are fine
+									kdHeapPush(succ.f, q);
+								}
+							}
 						}
 					}
 				}
 			}
-			succ.forEach(s => {
-				let q = s.x + "," + s.y;
-				let openSucc = open.get(q);
-				if (!openSucc || openSucc.f > s.f) {
-					let closedSucc = closed.get(q);
-					if (!closedSucc || closedSucc.f > s.f) {
-						open.set(q, s);
-					}
-				}
-			});
+		open.delete(lowLoc);
 
-
-			open.delete(lowLoc);
-
-			closed.set(lowLoc, lowest);
-		} else {
-			open.clear();
-			console.log("Pathfinding error! Please report this!");
-		}
+		closed.set(lowLoc, lowest);
 	}
 
 	return undefined;

@@ -39,6 +39,8 @@ function KinkyDungeonCreateMap (
 	// every time a map is created or moved the preference flags are updated
 	KDUpdatePreferenceFlags();
 	KDResetDialogue();
+	// Release the pathfinding heap so no data carries over between maps
+	KDResetPathfindingHeap();
 
 	KDTileModes = {};
 	KDUpdateOptionGame(false);
