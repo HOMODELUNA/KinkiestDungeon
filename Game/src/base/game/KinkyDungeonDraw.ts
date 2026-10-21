@@ -1594,7 +1594,7 @@ function KinkyDungeonDrawGame() {
 								let dist = diststart;
 								//let path = KinkyDungeonFindPath(KinkyDungeonPlayerEntity.x, KinkyDungeonPlayerEntity.y, KinkyDungeonTargetX, KinkyDungeonTargetY, false, false, true, KinkyDungeonMovableTilesSmartEnemy, false, false, false);
 								//let requireLight = KinkyDungeonVisionGet(KinkyDungeonTargetX, KinkyDungeonTargetY) > 0;
-								let path = KinkyDungeonFindPath(KinkyDungeonPlayerEntity.x, KinkyDungeonPlayerEntity.y, KinkyDungeonTargetX, KinkyDungeonTargetY,
+								let path = KDHoverPathCacheProxy.findPath(KinkyDungeonPlayerEntity.x, KinkyDungeonPlayerEntity.y, KinkyDungeonTargetX, KinkyDungeonTargetY,
 									true, false, false,
 									KDToggles.FastMoveDoors ? KinkyDungeonMovableTilesSmartEnemy : KinkyDungeonMovableTilesEnemy,
 									false, false, true,
@@ -3094,6 +3094,59 @@ function KinkyDungeonUpdateVisualPosition(Entity: any /*entity | KDBulletVisual*
 		//console.log("x = " + Entity.visual_x + ", y = " + Entity.visual_y + ", tx = " + tx + ", ty = " + ty)
 	}
 }
+
+let KDHoverPathCacheTTL = 200;
+
+/**
+ * Cache proxy for the hover/FastMove path preview.
+ * Drop-in replacement for KinkyDungeonFindPath (same arguments). 
+**/
+let KDHoverPathCacheProxy = {
+	_sig: <string>null,
+	_result: <KDPoint[]>undefined,
+	_has: false,
+	_at: 0,
+	_gen: 0,
+	_map: <any>undefined,
+	_nav: <any>undefined,
+	hits: 0,
+	misses: 0,
+
+	makeSig(...a: any[]): string {
+		if (this._map !== KDMapData || this._nav !== KDMovable) {
+			this._map = KDMapData;
+			this._nav = KDMovable;
+			this._gen++;
+		}
+		let enemy = a[11];
+		return `${a[0]},${a[1]},${a[2]},${a[3]},${a[7]},${a[16]},${a[20]},${enemy ? enemy.id : ""},${this._gen},${KDLastTick}`;
+	},
+
+	findPath(...a: any[]): KDPoint[] {
+		let s = this.makeSig(...a);
+		let t = performance.now();
+		if (this._has && this._sig === s && (t - this._at) <= KDHoverPathCacheTTL) {
+			this.hits++;
+			return this._result ? this._result.slice(0) : undefined;
+		}
+		this.misses++;
+		let r: KDPoint[] = (<any>KinkyDungeonFindPath).apply(null, a);
+		this._sig = s;
+		this._at = t;
+		this._has = true;
+		this._result = r ? r.slice(0) : undefined;
+		return r;
+	},
+
+	clear(): void {
+		this._sig = null;
+		this._result = undefined;
+		this._has = false;
+		this._at = 0;
+		this.hits = 0;
+		this.misses = 0;
+	},
+};
 
 /**
  * Sets the target location based on MOUSE location
