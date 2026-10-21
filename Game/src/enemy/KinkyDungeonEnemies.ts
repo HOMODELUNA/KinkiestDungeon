@@ -6245,7 +6245,7 @@ function KinkyDungeonEnemyLoop(enemy: entity, player: any, delta: number, vision
 						let splice = false;
 						if (T >= 8 || (enemy.path && !AIData.canSeePlayer) || (!AIData.canSeePlayer && !(enemy.Enemy.stopToCast && AIData.canShootPlayer))) {
 							// Allies are a little smarter and can always see the player usually
-							if (!enemy.path && (AIData.allied || KinkyDungeonAlert || KDEnemyReallyAware(enemy, player) || AIData.canSeePlayer)) {
+							if (!enemy.path && !KDEnemyHasFlag(enemy, "failpath") && (AIData.allied || KinkyDungeonAlert || KDEnemyReallyAware(enemy, player) || AIData.canSeePlayer)) {
 								if (!AIData.canSeePlayer) {
 									if (AIData.canShootPlayer) {
 										KDAddThought(enemy.id, "Shoot", 4, 2);
@@ -6262,6 +6262,8 @@ function KinkyDungeonEnemyLoop(enemy: entity, player: any, delta: number, vision
 									AIData.ignoreLocks, AIData.MovableTiles,
 									undefined, undefined, undefined, enemy,
 									!enemy.CurrentAction && enemy != KinkyDungeonJailGuard() && !KDEnemyHasFlag(enemy, "longPath")); // Give up and pathfind
+								const flagCooldown = 1 + Math.floor(KDRandom() * 5);
+								KinkyDungeonSetEnemyFlag(enemy, "failpath", flagCooldown);
 							}
 							if (enemy.path) {
 								if (enemy.path && enemy.path.length > 0 && Math.max(Math.abs(enemy.path[0].x - enemy.x),Math.abs(enemy.path[0].y - enemy.y)) < 1.5) {
