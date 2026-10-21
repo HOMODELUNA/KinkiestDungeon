@@ -262,6 +262,7 @@ function KinkyDungeonFindPath (
 		// Use the true predecessor for the diagonal-smoothing direction.
 		let lowest_old: KDPointCostSource = KDPathLegacyDir ? undefined : closed.get(lowest.s);
 		moveCost = 1;
+		let locIndex = `${lowLoc},${endx},${endy},${tileShort}`;
 			// Check bordering tiles on the lowest
 			for (let x = -1; x <= 1; x++) {
 				for (let y = -1; y <= 1; y++) {
@@ -271,7 +272,6 @@ function KinkyDungeonFindPath (
 						loc = (xx) + "," + (yy)
 						let tile = (xx == endx && yy == endy) ? "" : KinkyDungeonMapGet(xx, yy);
 						MapTile = KinkyDungeonTilesGet(loc);
-						let locIndex = `${lowLoc},${endx},${endy},${tileShort}`;
 						const useWiredDoor = allowWiredDoors && KDWiredDoorPathable(lowest.x, lowest.y, tile);
 						// If we have found the end
 						if (xx == endx && yy == endy) {
